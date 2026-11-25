@@ -29,7 +29,7 @@ env:
 jobs:
   rdp:
     name: "Windows 11 RDP"
-    runs-on: windows-11
+    runs-on: windows-latest
     timeout-minutes: 9999
 
     steps:
