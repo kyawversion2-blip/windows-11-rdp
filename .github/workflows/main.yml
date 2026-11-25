@@ -60,7 +60,7 @@ jobs:
 
       - name: "Start Tailscale"
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.method == 'tailscale'
-        uses: tailscale/tailscale-action@v3
+        uses: tailscale/github-action@v4
         with:
           authKey: ${{ env.TAILSCALE_AUTH_KEY }}
           ephemeral: true
