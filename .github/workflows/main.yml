@@ -42,6 +42,11 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
             -Name 'UserAuthentication' -Value 0
           net user "$Env:RDP_USER" "$Env:RDP_PASS" | Out-Null
+          Set-Service -Name TermService -StartupType Automatic
+          Restart-Service -Name TermService -Force
+          Start-Sleep -Seconds 3
+          Write-Host "TermService: $((Get-Service TermService).Status)"
+          Write-Host "Listening on 3389: $((Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue) -ne $null)"
           Write-Host "RDP listener enabled; credentials configured."
 
       - name: "Install ngrok"
