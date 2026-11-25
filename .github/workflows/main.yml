@@ -47,6 +47,10 @@ jobs:
           Start-Sleep -Seconds 3
           Write-Host "TermService: $((Get-Service TermService).Status)"
           Write-Host "Listening on 3389: $((Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue) -ne $null)"
+          Remove-NetFirewallRule -DisplayName 'RDP-Tailscale' -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName 'RDP-Tailscale' -Direction Inbound -Protocol TCP `
+            -LocalPort 3389 -Action Allow -Profile Any | Out-Null
+          Write-Host "Firewall rule RDP-Tailscale added (Profile=Any)."
           Write-Host "RDP listener enabled; credentials configured."
 
       - name: "Install ngrok"
@@ -68,6 +72,27 @@ jobs:
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ env.TAILSCALE_AUTH_KEY }}
+
+      - name: "Verify RDP reachable over Tailscale"
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.method == 'tailscale'
+        shell: pwsh
+        run: |
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          $tsIp = (& $ts ip -4).Trim()
+          Write-Host "::notice::Tailscale IPv4 = $tsIp"
+          Write-Host "TermService = $((Get-Service TermService).Status)"
+          Write-Host "Listener:"
+          Get-NetTCPConnection -LocalPort 3389 -ErrorAction SilentlyContinue |
+            Select-Object LocalAddress,LocalPort,State | Format-Table -AutoSize | Out-String | Write-Host
+          Write-Host "FW profiles: " + ((Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled)" }) -join ", ")
+          Get-NetFirewallRule -DisplayName 'RDP-Tailscale' -ErrorAction SilentlyContinue |
+            Select-Object DisplayName,Enabled,Direction,Action,Profile | Format-List | Out-String | Write-Host
+          $local = Test-NetConnection -ComputerName 127.0.0.1 -Port 3389 -InformationLevel Quiet -WarningAction SilentlyContinue
+          Write-Host "localhost:3389 = $local"
+          if (-not $local) {
+            Write-Host "::error::RDP is not listening on 3389 - see diagnostics above"
+            exit 1
+          }
 
       - name: "Keep RDP session alive (60m)"
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.method == 'tailscale'
