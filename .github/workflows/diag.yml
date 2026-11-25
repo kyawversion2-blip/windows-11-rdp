@@ -1,0 +1,68 @@
+name: "RDP diagnostics"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    name: "Diagnose tailnet reachability"
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: "Enable RDP + open firewall"
+        shell: pwsh
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -Value 0
+          Set-Service -Name TermService -StartupType Automatic
+          Restart-Service -Name TermService -Force
+          New-NetFirewallRule -DisplayName 'RDP-Tailscale' -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          New-NetFirewallRule -DisplayName 'DEBUG-8444' -Direction Inbound -Protocol TCP -LocalPort 8444 -Action Allow -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          Start-Sleep -Seconds 3
+
+      - name: "Start Tailscale"
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+
+      - name: "Print diagnostics"
+        shell: pwsh
+        run: |
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          Write-Host "=== TS IP ==="
+          & $ts ip -4
+          Write-Host "=== TS status ==="
+          & $ts status
+          Write-Host "=== netcheck ==="
+          & $ts netcheck
+          Write-Host "=== TermService ==="
+          Get-Service TermService | Format-List Name,Status,StartType | Out-String | Write-Host
+          Write-Host "=== listeners 3389 ==="
+          Get-NetTCPConnection -LocalPort 3389 -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,State,OwningProcess | Format-Table -AutoSize | Out-String | Write-Host
+          Write-Host "=== firewall profiles ==="
+          Get-NetFirewallProfile | Select-Object Name,Enabled,DefaultInboundAction,AllowInboundRules,NotifyOnListen | Format-Table -AutoSize | Out-String | Write-Host
+          Write-Host "=== connection profiles ==="
+          Get-NetConnectionProfile | Select-Object Name,InterfaceAlias,NetworkCategory | Format-Table -AutoSize | Out-String | Write-Host
+          Write-Host "=== RDP firewall rules ==="
+          Get-NetFirewallRule -DisplayName 'RDP-Tailscale','DEBUG-8444' -ErrorAction SilentlyContinue | Select-Object DisplayName,Enabled,Direction,Action,Profile | Format-Table -AutoSize | Out-String | Write-Host
+          Write-Host "=== tailscale iface ==="
+          Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -like '*Tailscale*' } | Select-Object InterfaceAlias,IPAddress | Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: "Hold listeners for 5 minutes"
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          $job = Start-Job -ScriptBlock {
+            $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, 8444)
+            $l.Start()
+            $deadline = (Get-Date).AddMinutes(5)
+            while ((Get-Date) -lt $deadline) {
+              if ($l.Pending()) { $c = $l.AcceptTcpClient(); $c.GetStream().Write([Text.Encoding]::ASCII.GetBytes("ok`n"),0,3); $c.Close() }
+              Start-Sleep -Milliseconds 200
+            }
+            $l.Stop()
+          }
+          Write-Host "Debug listener on 8444 is up; RDP on 3389 should be listening."
+          Start-Sleep -Seconds 300
+          Receive-Job $job
+          Remove-Job $job -Force
