@@ -62,9 +62,20 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.method == 'tailscale'
         uses: tailscale/github-action@v4
         with:
-          authKey: ${{ env.TAILSCALE_AUTH_KEY }}
-          ephemeral: true
-          ssh: true
+          authkey: ${{ env.TAILSCALE_AUTH_KEY }}
+
+      - name: "Keep RDP session alive (60m)"
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.method == 'tailscale'
+        shell: pwsh
+        timeout-minutes: 65
+        run: |
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          if (Test-Path $ts) {
+            Write-Host "Tailscale IPv4: $(& $ts ip -4)"
+            Write-Host "Hostname: $(& $ts status --json | ConvertFrom-Json | Select-Object -ExpandProperty Self | Select-Object -ExpandProperty DNSName)"
+          }
+          Write-Host "RDP ready for 60 minutes..."
+          Start-Sleep -Seconds 3600
 
       - name: "Print RDP connection info"
         shell: pwsh
